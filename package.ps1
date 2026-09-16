@@ -94,9 +94,8 @@ try {
     Copy-Item -LiteralPath ([IO.Path]::Combine($repository, 'patch\Apply-EN-Patch.ps1')) -Destination ([IO.Path]::Combine($packageRoot, 'Apply-EN-Patch.ps1')) -Force
     foreach ($guide in @('GUIDE_EN.md', 'GUIDE_EN.pdf', 'LINUX_GUIDE.md')) {
         $source = [IO.Path]::Combine($repository, 'docs', $guide)
-        if (Test-Path -LiteralPath $source -PathType Leaf) {
-            Copy-Item -LiteralPath $source -Destination ([IO.Path]::Combine($packageRoot, $guide)) -Force
-        }
+        if (!(Test-Path -LiteralPath $source -PathType Leaf)) { Stop-WithMessage "The user guide is missing: $source" 2 }
+        Copy-Item -LiteralPath $source -Destination ([IO.Path]::Combine($packageRoot, $guide)) -Force
     }
     $shimFiles = @('compat\amd-shim\opengl32.dll', 'compat\amd-shim\amdcfg\amdOglpSettings.cfg', 'compat\amd-shim\LICENSE', 'compat\fgoglcompat.dll')
     foreach ($relative in $shimFiles) {
@@ -107,11 +106,24 @@ try {
         Copy-Item -LiteralPath $source -Destination $destination -Force
     }
     
-    # Linux support files
+    # Linux support files (repeatable/idempotent mirroring)
     $linuxDir = [IO.Path]::Combine($repository, 'linux')
+    $linuxList = New-Object 'System.Collections.Generic.List[string]'
     if (Test-Path -LiteralPath $linuxDir -PathType Container) {
         Write-Host 'Copying Linux compatibility scripts and profiles'
-        Copy-Item -LiteralPath $linuxDir -Destination ([IO.Path]::Combine($packageRoot, 'linux')) -Recurse -Force
+        $linuxDest = [IO.Path]::Combine($packageRoot, 'linux')
+        if (Test-Path -LiteralPath $linuxDest -PathType Container) {
+            Remove-Item -LiteralPath $linuxDest -Recurse -Force
+        }
+        [void][IO.Directory]::CreateDirectory($linuxDest)
+        $linuxPrefix = $linuxDir.TrimEnd('\') + '\'
+        foreach ($file in (Get-ChildItem -LiteralPath $linuxDir -File -Recurse)) {
+            $rel = $file.FullName.Substring($linuxPrefix.Length)
+            $target = [IO.Path]::Combine($linuxDest, $rel)
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
+            Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+            $linuxList.Add([IO.Path]::Combine('linux', $rel))
+        }
     }
 
     $today = (Get-Date).ToString('yyyy-MM-dd')
@@ -124,10 +136,6 @@ try {
     Write-Host 'Building the manifest'
     & ([IO.Path]::Combine($repository, 'patch\Build-Manifest.ps1')) -PackageRoot $packageRoot -Version $Version
     if ($LASTEXITCODE -ne 0) { Stop-WithMessage 'The manifest could not be built, so the package is not complete.' 1 }
-
-    $linuxList = if (Test-Path -LiteralPath $linuxDir -PathType Container) {
-        @(Get-ChildItem -LiteralPath $linuxDir -File -Recurse | ForEach-Object { [IO.Path]::Combine('linux', $_.Name) })
-    } else { @() }
 
     $sums = New-Object 'System.Collections.Generic.List[string]'
     foreach ($name in (@('FGOAC scooby.exe', 'Apply-EN-Patch.ps1', 'manifest.json', 'README.md', 'CHANGELOG.md', 'GUIDE_EN.md', 'GUIDE_EN.pdf', 'LINUX_GUIDE.md') + $shimFiles + $linuxList)) {

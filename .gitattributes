@@ -6,7 +6,7 @@
 *.json    text
 *.md      text
 *.ps1     text
-*.py      text
+*.py      text eol=lf
 *.cmd     text eol=crlf
 *.yml     text eol=lf
 *.sh      text eol=lf

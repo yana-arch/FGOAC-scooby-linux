@@ -57,6 +57,20 @@ def wait_for_ports(ports: list[int], timeout: float = 20.0) -> bool:
     return False
 
 
+def has_nvidia_gpu() -> bool:
+    """Detect if NVIDIA GPU is present on the host to avoid breaking AMD/Intel only setups."""
+    if os.path.exists("/dev/nvidia0") or os.path.exists("/dev/nvidiactl"):
+        return True
+    if shutil.which("nvidia-smi"):
+        try:
+            res = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0 and "GPU" in res.stdout:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def get_server_settings():
     try:
         config_tool = SERVER_DIR / "tools" / "fgo_server_config.py"
@@ -101,7 +115,7 @@ def set_ini_value(text: str, section: str, key: str, value: str) -> str:
     return text[:section_start] + new_body + text[section_end:]
 
 
-def start_server():
+def start_server() -> bool:
     log("Request: Start FGO Local Server")
     
     # 1. Start MariaDB if port 8888 is not open
@@ -219,30 +233,83 @@ def stop_server():
     print("FGO local server stopped.")
 
 
+def is_game_running() -> bool:
+    """Check if ago.exe process is currently active."""
+    try:
+        if os.name == "nt":
+            res = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ago.exe"], capture_output=True, text=True)
+            return "ago.exe" in res.stdout
+        else:
+            res = subprocess.run(["pgrep", "-f", "ago.exe"], capture_output=True)
+            return res.returncode == 0
+    except Exception:
+        return False
+
+
+def stop_server_when_idle():
+    """Wait for ago.exe to exit before gracefully stopping MariaDB and Artemis."""
+    log("Request: Stop FGO Local Server When Idle (waiting for game exit)...")
+    while is_game_running():
+        time.sleep(1.0)
+    stop_server()
+
+
+def apply_en_patch() -> bool:
+    """Apply English translation files and write en-patch marker."""
+    log("Request: Apply English Patch")
+    payload_zh = PROJECT_ROOT / "payload" / "App" / "zh"
+    target_zh = APP_DIR / "zh"
+    if payload_zh.exists():
+        target_zh.mkdir(parents=True, exist_ok=True)
+        for item in payload_zh.glob("**/*"):
+            if item.is_file():
+                rel = item.relative_to(payload_zh)
+                dest = target_zh / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, dest)
+        log(f"Copied English translation files from {payload_zh} to {target_zh}")
+    
+    # Write en-patch marker
+    marker = target_zh / "en-patch.json"
+    marker.write_text(json.dumps({
+        "version": "1.1.1",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "status": "applied"
+    }, indent=2), encoding="utf-8")
+    log("Wrote en-patch.json marker.")
+    return True
+
+
 def launch_game(cmd_str: str):
     log(f"Request: Launch Game ({cmd_str})")
     print("Starting/checking the local ALL.Net, billing, AimeDB services...")
     
     # 1. Ensure local servers are running
-    start_server()
+    if not start_server():
+        sys.exit(1)
 
-    # 2. Parse display / resolution arguments
+    # 2. Parse display, resolution, input, and target fps arguments from launcher
     width = 1280
     height = 720
     windowed = True
+    input_mode = "xinput"
+    target_fps = 60
     
     m_w = re.search(r"-ResolutionWidth\s+(\d+)", cmd_str, re.IGNORECASE)
-    if m_w:
-        width = int(m_w.group(1))
+    if m_w: width = int(m_w.group(1))
     m_h = re.search(r"-ResolutionHeight\s+(\d+)", cmd_str, re.IGNORECASE)
-    if m_h:
-        height = int(m_h.group(1))
-    if "-DisplayMode exclusive" in cmd_str:
-        windowed = False
+    if m_h: height = int(m_h.group(1))
+    if "-DisplayMode exclusive" in cmd_str: windowed = False
+    
+    m_in = re.search(r"-InputMode\s+([a-zA-Z0-9_-]+)", cmd_str, re.IGNORECASE)
+    if m_in: input_mode = m_in.group(1).lower()
+    
+    m_fps = re.search(r"-TargetFps\s+(\d+)", cmd_str, re.IGNORECASE)
+    if m_fps: target_fps = int(m_fps.group(1))
 
     render_arg = "-hdtv720" if (width <= 1280 and height <= 720) else "-hdtv1080"
 
-    # 3. Synchronize INI settings for fgohook.dll
+    # 3. Synchronize INI settings into DEVICE/runtime/segatools.runtime.ini WITHOUT mutating App/segatools.ini
     base_ini = APP_DIR / "segatools.ini"
     runtime_dir = DEVICE_DIR / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -250,7 +317,7 @@ def launch_game(cmd_str: str):
 
     ini_content = base_ini.read_text(encoding="utf-8", errors="replace") if base_ini.exists() else ""
     
-    # Update resolution & surface parameters
+    # Update resolution & surface parameters for runtime
     ini_content = set_ini_value(ini_content, "amvideo", "enable", "1")
     ini_content = set_ini_value(ini_content, "amvideo", "resolutionWidth", str(width))
     ini_content = set_ini_value(ini_content, "amvideo", "resolutionHeight", str(height))
@@ -264,22 +331,24 @@ def launch_game(cmd_str: str):
     ini_content = set_ini_value(ini_content, "gfx", "logicalHeight", str(height))
     ini_content = set_ini_value(ini_content, "gfx", "preserveAspect", "1")
 
+    # Update input mode
+    if input_mode in ["xinput", "keyboard", "dualsense"]:
+        ini_content = set_ini_value(ini_content, "io4", "mode", input_mode)
+
     ini_content = set_ini_value(ini_content, "dns", "default", "192.168.100.1")
     ini_content = set_ini_value(ini_content, "dns", "startupPort", "777")
     ini_content = set_ini_value(ini_content, "dns", "billingPort", "9999")
     ini_content = set_ini_value(ini_content, "dns", "aimedbPort", "7777")
 
-    # Write both UTF-8 base INI and UTF-16 runtime INI
+    # Write UTF-16LE runtime INI as expected by SegaTools native parser
     try:
-        base_ini.write_text(ini_content, encoding="utf-8")
         runtime_ini.write_text(ini_content, encoding="utf-16")
     except Exception as e:
-        log(f"Error saving updated segatools ini: {e}")
+        log(f"Error saving updated runtime segatools ini: {e}")
 
     # 4. Prepare injection arguments
     inject_exe = str((APP_DIR / "inject.exe").resolve())
     
-    # Ensure zh translation files exist
     if (APP_DIR / "zh" / "fgozh.dll").exists() and not (APP_DIR / "fgozh.dll").exists():
         try:
             shutil.copy2(APP_DIR / "zh" / "fgozh.dll", APP_DIR / "fgozh.dll")
@@ -296,13 +365,20 @@ def launch_game(cmd_str: str):
         args.append("-w")
 
     env = os.environ.copy()
-    env["__NV_PRIME_RENDER_OFFLOAD"] = "1"
-    env["__GLX_VENDOR_LIBRARY_NAME"] = "nvidia"
-    env["__VK_LAYER_NV_optimus"] = "NVIDIA_only"
-    env["DXVK_FILTER_DEVICE_NAME"] = "GeForce"
+    
+    # Enable NVIDIA PRIME Offload ONLY if NVIDIA GPU is present on host
+    if has_nvidia_gpu():
+        log("NVIDIA GPU detected: Enabling PRIME Render Offload")
+        env["__NV_PRIME_RENDER_OFFLOAD"] = "1"
+        env["__GLX_VENDOR_LIBRARY_NAME"] = "nvidia"
+        env["__VK_LAYER_NV_optimus"] = "NVIDIA_only"
+        env["DXVK_FILTER_DEVICE_NAME"] = "GeForce"
+    else:
+        log("Non-NVIDIA or Mesa GPU detected: Running standard OpenGL / fluphus compatibility layer")
+
     env["SEGATOOLS_CONFIG_PATH"] = str(runtime_ini)
     env["FGO_ZH_ENABLED"] = "1"
-    env["FGO_TARGET_FPS"] = "60"
+    env["FGO_TARGET_FPS"] = str(target_fps)
     env["FGO_FULL_SURFACE_FBO"] = "1"
     env["FGO_SMAA"] = "0"
     env["FGO_RENDER_SCALE"] = "100"
@@ -312,7 +388,7 @@ def launch_game(cmd_str: str):
     log(f"Spawning inject in {APP_DIR}: {' '.join(args)}")
     print(f"Virtual LAN: 192.168.100.1 (local bridge=True)")
     print(f"Server     : 192.168.100.1")
-    print(f"Display    : {'windowed' if windowed else 'fullscreen'} {width}x{height}")
+    print(f"Display    : {'windowed' if windowed else 'fullscreen'} {width}x{height} @ {target_fps}fps")
     print(f"[inject] starting; stdout and stderr are live.")
 
     def run_proc(current_args):
@@ -372,33 +448,45 @@ def main():
     if "PSVersionTable" in cmd_str:
         sys.exit(0)
 
-    # 1. Start Server
-    if "Start-FGOLocalServer" in cmd_str and "FGO_Launcher.ps1" not in cmd_str:
-        start_server()
+    # 1. Stop Server When Idle
+    if "Stop-FGOLocalServerWhenIdle" in cmd_str:
+        stop_server_when_idle()
         sys.exit(0)
 
-    # 2. Stop Server
+    # 2. Stop Server Immediately
     if "Stop-FGOLocalServer" in cmd_str:
         stop_server()
         sys.exit(0)
 
-    # 3. Server Settings
+    # 3. Start Server
+    if "Start-FGOLocalServer" in cmd_str and "FGO_Launcher.ps1" not in cmd_str:
+        if not start_server():
+            sys.exit(1)
+        sys.exit(0)
+
+    # 4. Server Settings
     if "ServerSettings.ps1" in cmd_str or "Get-FgoServerSettings" in cmd_str:
         print(get_server_settings())
         sys.exit(0)
 
-    # 4. Get-NetTCPConnection
+    # 5. Get-NetTCPConnection
     if "Get-NetTCPConnection" in cmd_str:
         handle_get_net_tcp_connection(cmd_str)
         sys.exit(0)
 
-    # 5. Launch Game
+    # 6. Launch Game
     if "FGO_Launcher.ps1" in cmd_str:
         launch_game(cmd_str)
         sys.exit(0)
 
-    # 6. Patch & Environment / Startup checks
-    if "Apply-EN-Patch.ps1" in cmd_str or "FGO_EnvironmentCheck" in cmd_str or "FGO_StartupChecks" in cmd_str or "Test-FgoWritableLayout" in cmd_str:
+    # 7. Apply English Patch
+    if "Apply-EN-Patch.ps1" in cmd_str:
+        if not apply_en_patch():
+            sys.exit(1)
+        sys.exit(0)
+
+    # 8. Environment & Startup checks
+    if "FGO_EnvironmentCheck" in cmd_str or "FGO_StartupChecks" in cmd_str or "Test-FgoWritableLayout" in cmd_str:
         if "-AsJson" in cmd_str:
             print("[]")
         sys.exit(0)

@@ -12,29 +12,34 @@ fi
 
 echo "[*] Configuring Linux host network for FGO Arcade Offline Build..."
 
-# 1. Allow unprivileged processes to bind to port 777 (and all ports >= 0)
-echo "[*] Setting net.ipv4.ip_unprivileged_port_start=0..."
+# 1. Allow unprivileged processes to bind to port 777 (Artemis ALL.Net HTTP)
+#    and allow ptrace injection (required by inject.exe to inject fgohook.dll into ago.exe)
+echo "[*] Setting net.ipv4.ip_unprivileged_port_start=0 and kernel.yama.ptrace_scope=0..."
 sysctl -w net.ipv4.ip_unprivileged_port_start=0 >/dev/null
 sysctl -w kernel.yama.ptrace_scope=0 >/dev/null
 
 SYSCTL_CONF="/etc/sysctl.d/50-fgoa-unprivileged-ports.conf"
 cat <<EOF > "$SYSCTL_CONF"
-# FGO Arcade Offline Build Network Permissions
+# FGO Arcade Offline Build Network & Process Permissions
+# 1. unprivileged_port_start=0 allows Artemis local server to bind to port 777 without root.
 net.ipv4.ip_unprivileged_port_start = 0
+# 2. ptrace_scope=0 allows inject.exe to attach to ago.exe and inject fgohook.dll.
 kernel.yama.ptrace_scope = 0
 EOF
 echo "[+] Saved sysctl configuration to $SYSCTL_CONF"
 
 # 2. Add 192.168.100.1/32 to loopback interface if not already present
 echo "[*] Adding 192.168.100.1/32 to lo interface..."
-if ! ip addr show lo | grep -q "192.168.100.1"; then
-    ip addr add 192.168.100.1/32 dev lo
+IP_BIN="$(command -v ip || echo "ip")"
+
+if ! "$IP_BIN" addr show lo | grep -q "192.168.100.1"; then
+    "$IP_BIN" addr add 192.168.100.1/32 dev lo
     echo "[+] Added 192.168.100.1/32 to lo."
 else
     echo "[+] 192.168.100.1/32 is already present on lo."
 fi
 
-# 3. Create persistent systemd service for virtual bridge IP
+# 3. Create persistent systemd service for virtual bridge IP across reboots
 SERVICE_FILE="/etc/systemd/system/fgoa-vnet.service"
 echo "[*] Installing $SERVICE_FILE..."
 cat <<EOF > "$SERVICE_FILE"
@@ -45,8 +50,8 @@ After=network.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/ip addr replace 192.168.100.1/32 dev lo
-ExecStop=/usr/bin/ip addr del 192.168.100.1/32 dev lo
+ExecStart=ip addr replace 192.168.100.1/32 dev lo
+ExecStop=ip addr del 192.168.100.1/32 dev lo
 
 [Install]
 WantedBy=multi-user.target
