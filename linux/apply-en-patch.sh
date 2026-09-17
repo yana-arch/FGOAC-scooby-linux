@@ -34,6 +34,24 @@ if [[ -f "${PROJECT_ROOT}/App/fgozh.dll" ]]; then
     rm -f "${PROJECT_ROOT}/App/fgozh.dll"
 fi
 
+# 2b. Patch fgozh.dll for Wine/Proton compatibility (NtQueryInformationByName fallback)
+python3 -c "
+for target in ['${APP_ZH}/fgozh.dll', '${PAYLOAD_ZH}/fgozh.dll']:
+    try:
+        with open(target, 'rb') as f:
+            data = bytearray(f.read())
+        offset = 0x19e99
+        if offset + 5 <= len(data):
+            if data[offset:offset+5] == bytes.fromhex('b80c000000'):
+                data[offset:offset+5] = bytes.fromhex('31c0909090')
+                with open(target, 'wb') as f:
+                    f.write(data)
+                print(f'[+] Applied Wine compatibility patch to {target}')
+    except Exception as e:
+        print(f'[!] Warning: Failed to patch {target}: {e}')
+"
+
+
 # 3. Create or update en-patch.json marker
 MARKER_FILE="${APP_ZH}/en-patch.json"
 cat <<EOF > "${MARKER_FILE}"

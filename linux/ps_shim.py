@@ -348,10 +348,12 @@ def launch_game(cmd_str: str):
 
     # 4. Prepare injection arguments
     inject_exe = str((APP_DIR / "inject.exe").resolve())
+    hook_dll = str((APP_DIR / "fgohook.dll").resolve())
+    chinese_hook_dll = str((APP_DIR / "zh" / "fgozh.dll").resolve())
     
-    args = [inject_exe, "-d", "-k", "fgohook.dll"]
+    args = [inject_exe, "-d", "-k", hook_dll]
     if (APP_DIR / "zh" / "fgozh.dll").exists():
-        args.extend(["-k", "zh\\fgozh.dll"])
+        args.extend(["-k", chinese_hook_dll])
     
     args.append("ago.exe")
     args.append(render_arg)
@@ -409,8 +411,9 @@ def launch_game(cmd_str: str):
 
     try:
         rc, output = run_proc(args)
-        if rc != 0 and ("fgozh.dll: DLL failed to load" in output or "zh\\fgozh.dll: DLL failed to load" in output):
-            log("Warning: fgozh.dll failed to load, falling back to fgohook only...")
+        if rc != 0 and ("fgozh.dll: DLL failed to load" in output or "zh\\fgozh.dll: DLL failed to load" in output or "failed to load" in output.lower()):
+            log(f"Warning: First inject failed with rc={rc}. Output:\n{output.strip()}")
+            log("Falling back to fgohook only...")
             fallback_args = [inject_exe, "-d", "-k", "fgohook.dll", "ago.exe", render_arg]
             if windowed:
                 fallback_args.append("-w")
