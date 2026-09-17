@@ -889,14 +889,14 @@ def build_servlet(isolated_profile_path=None):
     with open(CORE_CONFIG_PATH, "r", encoding="utf-8") as config_file:
         cfg.update(yaml.safe_load(config_file))
     config_dir = ARTEMIS_DIR / "config"
+    with open(config_dir / "fgo.yaml", "r", encoding="utf-8") as config_file:
+        isolated_config = yaml.safe_load(config_file) or {}
+    isolated_server = isolated_config.setdefault("server", {})
+    isolated_server["loglevel"] = "warning"
+
     if isolated_profile_path is not None:
         isolated_path = Path(isolated_profile_path).resolve()
         isolated_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(
-            config_dir / "fgo.yaml", "r", encoding="utf-8"
-        ) as config_file:
-            isolated_config = yaml.safe_load(config_file) or {}
-        isolated_server = isolated_config.setdefault("server", {})
         isolated_server["profile_path"] = str(isolated_path)
         isolated_server["capture_dir"] = str(
             ARTEMIS_DIR / "logs" / "fgo_capture"
@@ -906,6 +906,15 @@ def build_servlet(isolated_profile_path=None):
         ) as config_file:
             yaml.safe_dump(isolated_config, config_file, sort_keys=False)
         config_dir = isolated_path.parent
+    else:
+        temp_dir = ARTEMIS_DIR / "config" / "_account_tool_temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        with open(
+            temp_dir / "fgo.yaml", "w", encoding="utf-8"
+        ) as config_file:
+            yaml.safe_dump(isolated_config, config_file, sort_keys=False)
+        config_dir = temp_dir
+
     return FgoServlet(cfg, str(config_dir))
 
 
