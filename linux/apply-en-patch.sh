@@ -34,6 +34,27 @@ if [[ -f "${PROJECT_ROOT}/App/fgozh.dll" ]]; then
     rm -f "${PROJECT_ROOT}/App/fgozh.dll"
 fi
 
+# 2b. Safe Wine/Proton compatibility patch (preserves .bak)
+python3 -c "
+import shutil
+for target in ['${APP_ZH}/fgozh.dll', '${PAYLOAD_ZH}/fgozh.dll']:
+    try:
+        bak = target + '.bak'
+        if not shutil.os.path.exists(bak) and shutil.os.path.exists(target):
+            shutil.copyfile(target, bak)
+        with open(target, 'rb') as f:
+            data = bytearray(f.read())
+        offset = 0x19e99
+        if offset + 5 <= len(data) and data[offset:offset+5] == bytes.fromhex('b80c000000'):
+            data[offset:offset+5] = bytes.fromhex('31c0909090')
+            with open(target, 'wb') as f:
+                f.write(data)
+            print(f'[+] Applied Wine compatibility patch to {target}')
+    except Exception as e:
+        print(f'[!] Warning: Could not patch {target}: {e}')
+"
+
+
 
 # 3. Create or update en-patch.json marker
 MARKER_FILE="${APP_ZH}/en-patch.json"
