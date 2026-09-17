@@ -29,10 +29,9 @@ echo "[*] Copying English translation assets to App/zh/..."
 mkdir -p "${APP_ZH}"
 cp -r "${PAYLOAD_ZH}/"* "${APP_ZH}/"
 
-# Ensure translation hook DLL is present in App
-if [[ -f "${APP_ZH}/fgozh.dll" && ! -f "${PROJECT_ROOT}/App/fgozh.dll" ]]; then
-    cp "${APP_ZH}/fgozh.dll" "${PROJECT_ROOT}/App/fgozh.dll"
-    echo "[+] Copied fgozh.dll to App/fgozh.dll"
+# Clean up any misplaced fgozh.dll in App/ root to prevent path mismatch
+if [[ -f "${PROJECT_ROOT}/App/fgozh.dll" ]]; then
+    rm -f "${PROJECT_ROOT}/App/fgozh.dll"
 fi
 
 # 3. Create or update en-patch.json marker

@@ -349,15 +349,9 @@ def launch_game(cmd_str: str):
     # 4. Prepare injection arguments
     inject_exe = str((APP_DIR / "inject.exe").resolve())
     
-    if (APP_DIR / "zh" / "fgozh.dll").exists() and not (APP_DIR / "fgozh.dll").exists():
-        try:
-            shutil.copy2(APP_DIR / "zh" / "fgozh.dll", APP_DIR / "fgozh.dll")
-        except Exception:
-            pass
-
     args = [inject_exe, "-d", "-k", "fgohook.dll"]
-    if (APP_DIR / "fgozh.dll").exists():
-        args.extend(["-k", "fgozh.dll"])
+    if (APP_DIR / "zh" / "fgozh.dll").exists():
+        args.extend(["-k", "zh\\fgozh.dll"])
     
     args.append("ago.exe")
     args.append(render_arg)
@@ -415,7 +409,7 @@ def launch_game(cmd_str: str):
 
     try:
         rc, output = run_proc(args)
-        if rc != 0 and "fgozh.dll: DLL failed to load" in output:
+        if rc != 0 and ("fgozh.dll: DLL failed to load" in output or "zh\\fgozh.dll: DLL failed to load" in output):
             log("Warning: fgozh.dll failed to load, falling back to fgohook only...")
             fallback_args = [inject_exe, "-d", "-k", "fgohook.dll", "ago.exe", render_arg]
             if windowed:
