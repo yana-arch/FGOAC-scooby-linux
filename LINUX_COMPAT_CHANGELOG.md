@@ -467,3 +467,41 @@ cp App/ago.exe.bak App/ago.exe
 # 3. Restore unpatched fgozh.dll binary
 cp App/zh/fgozh.dll.bak App/zh/fgozh.dll
 ```
+
+---
+
+## 8. Comprehensive Inventory of Python Modules & Linux Helper Scripts
+
+Below is the complete reference inventory of all helper scripts, shim modules, backend optimizations, and overlay files deployed in this release:
+
+### 8.1. Shell Scripts (`fgoa-linux/`)
+
+| Script Name | Path | Execution Context | Description & Purpose |
+| :--- | :--- | :--- | :--- |
+| `setup-fgoa-linux.sh` | [`fgoa-linux/setup-fgoa-linux.sh`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/fgoa-linux/setup-fgoa-linux.sh) | User (`./setup-fgoa-linux.sh`) | **1-Click Master Setup Script**. Checks host packages, creates symlinks (`pwsh.exe`/`powershell.exe` $\rightarrow$ `ps_shim.py`), invokes `setup-linux-network.sh`, applies binary patches to `ago.exe` and `fgozh.dll`, and verifies file permissions. |
+| `setup-linux-network.sh` | [`fgoa-linux/setup-linux-network.sh`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/fgoa-linux/setup-linux-network.sh) | Sudo (`sudo ./setup-linux-network.sh`) | **Network Privilege & Loopback Setup**. Adds `192.168.100.1` to the `lo` interface, sets `net.ipv4.ip_unprivileged_port_start = 0` and `kernel.yama.ptrace_scope = 0`, and registers the `fgoa-vnet.service` systemd unit for persistent boot. |
+| `uninstall-linux-network.sh` | [`fgoa-linux/uninstall-linux-network.sh`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/fgoa-linux/uninstall-linux-network.sh) | Sudo (`sudo ./uninstall-linux-network.sh`) | **Network Rollback Script**. Stops and disables `fgoa-vnet.service`, removes the `192.168.100.1` IP alias, and restores default Linux kernel sysctl parameters. |
+| `apply-en-patch.sh` | [`fgoa-linux/apply-en-patch.sh`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/fgoa-linux/apply-en-patch.sh) | User (`./apply-en-patch.sh`) | **English Translation DLL Patcher**. Automatically backs up `App/zh/fgozh.dll` to `.bak` and patches 5 bytes at file offset `0x19e99` (`mov eax, 0xC` $\rightarrow$ `xor eax, eax; nop; nop; nop`) to bypass Wine's missing `NtQueryInformationByName`. |
+| `patch-ago-iat.sh` | [`fgoa-linux/patch-ago-iat.sh`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/fgoa-linux/patch-ago-iat.sh) | User (`./patch-ago-iat.sh`) | **Game Binary IAT Patcher**. Automatically backs up `App/ago.exe` to `.bak` and patches the 25-byte IAT entry at offset `0x1970d78`, replacing `SetWindowFeedbackSetting` with `SetWindowTextA`. |
+
+---
+
+### 8.2. Python Core Modules & Shims
+
+| Module Name | Path | Execution Context | Description & Key Modifications |
+| :--- | :--- | :--- | :--- |
+| `ps_shim.py` | [`fgoa-linux/ps_shim.py`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/fgoa-linux/ps_shim.py) | Symlinked by `powershell.exe` & `pwsh.exe` | **Wine PowerShell Replacement Shim**. Intercepts launcher PowerShell invocations, manages background daemons (`mysqld.exe`, `artemis.exe`), performs TCP socket polling on ports `8888`, `777`, `7777`, `9999`, enforces 720p resolution synchronization, and spawns `inject.exe` using relative DLL paths (`fgohook.dll`, `zh\fgozh.dll`) to avoid `WriteProcessMemory` errors. |
+| `fgo_account.py` | [`Server/tools/fgo_account.py`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/Server/tools/fgo_account.py) | Called by Scooby Launcher C# GUI | **Account Management CLI Handler**. In `build_servlet()`, forces `loglevel: warning` on `FgoServlet` core config. Prevents Artemis `[INFO]` log statements from corrupting `stdout`, ensuring pure JSON output for Scooby's parser (`bad_output` fix). |
+| `fgo_account_actions.py` | [`Server/tools/fgo_account_actions.py`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/Server/tools/fgo_account_actions.py) | Imported by `fgo_account.py` | **Account Actions & Upgrade Engine**. Implements $O(1)$ pre-indexing using `collections.defaultdict(list)` for `limits_by_svt`, `skills_by_svt`, `support_skills_by_svt`, and `np_by_svt`. Eliminates nested linear scans during "Max All Servants". |
+| `index.py` | [`Server/artemis/titles/fgo/index.py`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/Server/artemis/titles/fgo/index.py) | Imported by Artemis server / servlet | **FGO Title Servlet & Master ROM Loader**. Added `@functools.lru_cache(maxsize=128)` to `_load_property_rows` to cache parsed binary ROM tables in memory, avoiding hundreds of redundant disk reads across account operations. |
+
+---
+
+### 8.3. Scooby Overlay Tree (`fgoa-linux/FGOAC-scooby/overlay/`)
+
+The Scooby repository uses an `overlay/` mechanism: files placed in `overlay/` are automatically bundled and overlaid onto the game root during installation or update:
+
+| Overlay File | Repository Path | Target Location on Game Root |
+| :--- | :--- | :--- |
+| `fgo_account.py` | [`overlay/Server/tools/fgo_account.py`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/fgoa-linux/FGOAC-scooby/overlay/Server/tools/fgo_account.py) | `Server/tools/fgo_account.py` |
+| `fgo_account_actions.py` | [`overlay/Server/tools/fgo_account_actions.py`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/fgoa-linux/FGOAC-scooby/overlay/Server/tools/fgo_account_actions.py) | `Server/tools/fgo_account_actions.py` |
