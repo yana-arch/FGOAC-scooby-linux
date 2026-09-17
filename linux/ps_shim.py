@@ -347,13 +347,14 @@ def launch_game(cmd_str: str):
         log(f"Error saving updated runtime segatools ini: {e}")
 
     # 4. Prepare injection arguments
-    inject_exe = str((APP_DIR / "inject.exe").resolve())
-    hook_dll = str((APP_DIR / "fgohook.dll").resolve())
-    chinese_hook_dll = str((APP_DIR / "zh" / "fgozh.dll").resolve())
+    inject_exe = "inject.exe"
+    hook_dll = "fgohook.dll"
+    chinese_hook_dll = "zh\\fgozh.dll" if os.name == "nt" else "zh/fgozh.dll"
     
     args = [inject_exe, "-d", "-k", hook_dll]
     if (APP_DIR / "zh" / "fgozh.dll").exists():
         args.extend(["-k", chinese_hook_dll])
+
     
     args.append("ago.exe")
     args.append(render_arg)
