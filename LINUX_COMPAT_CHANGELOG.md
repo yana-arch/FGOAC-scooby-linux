@@ -23,7 +23,7 @@ chmod +x fgoa-linux/setup-fgoa-linux.sh
 
 ## 1. Technical Overview & Architecture Diagrams
 
-The offline FGO Arcade build (originally designed for Windows with ALL.Net, SegaTools, Artemis Server, and the Scooby GUI Launcher) encountered **9 major technical hurdles** across various system layers when ported to Linux/Lutris:
+The offline FGO Arcade build (originally designed for Windows with ALL.Net, SegaTools, Artemis Server, and the Scooby GUI Launcher) encountered **10 major technical hurdles** across various system layers when ported to Linux/Lutris:
 1. **Host Operating System (Linux Network / Kernel)**: Privileged ports `<1024` & Loopback IP `192.168.100.1`.
 2. **Compatibility Layer (Wine / Proton API)**: Rudimentary Wine PowerShell stub lacking networking cmdlets (`Test-NetConnection`).
 3. **Graphics & Display Configuration (SegaTools / Surface Resolution)**: Resolution mismatch between `[amvideo]` and `[gfx]`.
@@ -33,6 +33,7 @@ The offline FGO Arcade build (originally designed for Windows with ALL.Net, Sega
 7. **Remote DLL Injection (inject.exe Memory Allocation)**: Long absolute Windows paths triggering `WriteProcessMemory 80070005` (Access Denied).
 8. **Account Management Tool (Scooby JSON Parsing)**: Artemis `FgoServlet` log output polluting `stdout` before JSON response (`bad_output`).
 9. **Database & Backend Performance ("Max All Servants" Timeout)**: Uncached linear $O(N \times M)$ scan of master ROM tables causing 60-second GUI timeouts.
+10. **Update Regression & SHA256 Integrity Verification (Scooby v1.2.0+ Auto-Patching)**: Fresh release archives overwrite files with Windows binaries; Scooby's `FirstRun.cs` SHA256 integrity verification triggered re-copy loops that wiped Wine patches.
 
 ```mermaid
 flowchart TD
@@ -43,11 +44,12 @@ flowchart TD
     E -->|NVIDIA PRIME Render Offload| F{"5. SetWindowFeedbackSetting"}
     F -->|Patch 25-byte IAT in ago.exe| G{"6. Translation Hook fgozh.dll"}
     G -->|Patch offset 0x19e99 Wine NtQuery| H{"7. inject.exe Remote Memory"}
-    H -->|Relative DLL paths| I["🎯 Game Runs Smoothly in Full English at 60 FPS!"]
+    H -->|Relative DLL paths| I{"10. Scooby v1.2.0+ Update Regression"}
+    I -->|ensure_wine_patches Self-Healing| J["🎯 Game Runs Smoothly in Full English at 60 FPS!"]
     
-    J["2. Open Account Manager on Scooby"] --> K{"8. JSON bad_output Error"}
-    K -->|Set loglevel: warning in build_servlet| L{"9. Max All Servants 60s Timeout"}
-    L -->|Hash table O(1) & lru_cache (81s -> 5s)| M["🎯 Instant Account Management Response!"]
+    K["2. Open Account Manager on Scooby"] --> L{"8. JSON bad_output Error"}
+    L -->|Set loglevel: warning in build_servlet| M{"9. Max All Servants 60s Timeout"}
+    M -->|Hash table O(1) & lru_cache (81s -> 5s)| N["🎯 Instant Account Management Response!"]
 ```
 
 ```mermaid
@@ -344,6 +346,40 @@ def build_servlet(config: Dict[str, Any]) -> FgoServlet:
 
 ---
 
+### 2.10. Hurdle 10: Update Regression & Scooby SHA256 Manifest Verification (Self-Healing Auto-Patching)
+
+#### Problem:
+* After updating to a newer Scooby release (e.g. `v1.2.0`), the game reverted to **100% Japanese text** despite having "English text on" enabled.
+* [`logs/server-control.log`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/logs/server-control.log) recorded:
+  ```text
+  zh\fgozh.dll: DLL failed to load inside target process
+  Falling back to fgohook only...
+  ```
+* In addition, account tools failed with `bad_output` JSON parse errors again.
+
+#### Root Cause:
+1. **New Release Archives Overwrite Patched Binaries**:
+   * Unpacking a new Scooby package replaces files in `payload/` with pristine Windows binaries.
+   * `payload/App/zh/fgozh.dll` had offset `0x19e99` reset to `b8 0c 00 00 00` (`mov eax, 0xC`), which fails under Wine due to missing `NtQueryInformationByName`.
+   * `payload/Server/tools/fgo_account.py` was also replaced with an unpatched version lacking `loglevel: warning`.
+2. **Scooby SHA256 Manifest Verification Loop (`FirstRun.cs`)**:
+   * Scooby's `IsPatchInstalled()` method hashes all non-ROM files and compares them against `manifest.json`.
+   * Because `manifest.json` recorded the SHA256 of the unpatched Windows DLL, modifying `fgozh.dll` on Linux caused Scooby to think the patch was corrupted, automatically invoking `Apply-EN-Patch.ps1` on every startup and copying the unpatched Windows binary back over the patched one.
+
+#### Solution & Permanent Self-Healing Architecture:
+1. **Manifest & Marker Synchronization**:
+   * Updated `App/zh/en-patch.json` with version `1.2.0` and matching `manifestHash`.
+   * Updated `manifest.json` with the SHA256 hash of the patched `App\zh\fgozh.dll` and `Server\tools\fgo_account.py`.
+2. **Integrated `ensure_wine_patches()` Self-Healing Module**:
+   * In [`fgoa-linux/ps_shim.py`](file:///mnt/b8bb01e2-cde0-4065-a205-5f0c9bd48545/G/FGOA/FGOA_Cloud23333/fgoa-linux/ps_shim.py), `ensure_wine_patches()` executes automatically at 3 critical lifecycle points:
+     - When `Apply-EN-Patch.ps1` runs.
+     - On launcher startup in `main()`.
+     - **Right before spawning `inject.exe` on "Play"**.
+   * If any future release overwrites `fgozh.dll` with unpatched bytes (`b8 0c 00 00 00`), the shim **instantly auto-patches it on disk and in payload to `31 c0 90 90 90`**, verifies `ago.exe` IAT, and auto-restores overlay fixes for `fgo_account.py` and `fgo_account_actions.py`.
+   * Subsequent updates will never break English translation again.
+
+---
+
 ## 3. Troubleshooting Matrix (Quick FAQ)
 
 | Symptom | Error Code | Root Cause | Immediate Fix |
@@ -356,6 +392,7 @@ def build_servlet(config: Dict[str, Any]) -> FgoServlet:
 | `WriteProcessMemory failed` | `0x80070005` (Access Denied) | `inject.exe` received long absolute Windows paths `S:\...` | Use relative paths `fgohook.dll` & `zh\fgozh.dll` in `ps_shim.py` |
 | `Account tool bad_output error` | JSON Parse Error | `FgoServlet` printed info logs to `stdout` | Set `loglevel: warning` in `build_servlet()` in `fgo_account.py` |
 | `Max All Servants Timeout (60s)` | `TimeoutException` | $O(N \times M)$ linear table scan took >80s | Use $O(1)$ dict indexing & `lru_cache` in `fgo_account_actions.py` (5.04s) |
+| `English lost after Scooby update` | Reverted Translation | Package overwrote Windows binaries & SHA256 check re-copy loop | Handled automatically by `ps_shim.py` `ensure_wine_patches()` self-healing |
 | `Black screen / Unresponsive window` | Hang | Lingering zombie `amdaemon` processes | Run `pkill -f "ago.exe\|amdaemon.exe\|inject.exe"` |
 
 ---
