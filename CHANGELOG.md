@@ -17,9 +17,27 @@ installer that puts them there.
   - Python PowerShell Shim (`linux/ps_shim.py`) to manage local MariaDB and Artemis server instances seamlessly under Wine.
   - Linux host network configuration script (`linux/setup-linux-network.sh`) to configure loopback virtual bridge `192.168.100.1/32` and privileged port binding.
   - Pre-configured Lutris game profile template (`linux/fgolocalplatform.lutris.yml`).
-  - Comprehensive Linux player and troubleshooting guide (`docs/LINUX_GUIDE.md`).
+  - Comprehensive Linux player and troubleshooting guide (`LINUX_COMPAT_CHANGELOG.md`).
 - Automated 25-byte IAT patch for `App/ago.exe` (offset `0x1971978`) fixing `SetWindowFeedbackSetting` crash (`0x80000100` / `STATUS_WINE_STUB`) under Wine.
 - Dual-GPU hybrid graphics support via automatic NVIDIA PRIME render offload.
+- Self-healing auto-patch mechanism in `ps_shim.py` resolving Wine translation hook and account tool compatibility.
+
+## [1.2.0] - 2026-09-21
+
+Works on Cloud23333's V1.01 and V1.02. Unzip this release over your game folder and run the
+launcher, or take it through Check for updates. Your accounts, decks, settings and whichever
+graphics layer you have stay as they are.
+
+### Fixed
+
+- Apply-EN-Patch.ps1 -Rollback after an update that changed no game files restored the previous
+  release's backup. It now restores the marker alone.
+
+### Added
+
+- Banners (Advanced): choose which limited-time events appear on the Terminal page. Press Apply FGO
+  Event Toggle Patch once, tick the events to keep and press Save, then stop and start the local
+  server from the Play page. With nothing ticked every banner appears. Contributed by Silvarrn.
 
 ## [1.1.2] - 2026-09-16
 

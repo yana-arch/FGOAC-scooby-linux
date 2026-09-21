@@ -47,9 +47,9 @@ The launcher has five pages:
   effects) and deck editor, plus the Draw Rates page.
 - **Settings** - display (monitor, resolution, aspect ratio, frame rate), controls (keyboard, XInput,
   DualSense), and audio.
-- **Advanced** - server start/stop and settings, Diagnostics and Help (environment check and error
-  codes), mouse cursor, debug, photo mode, and About (credits, including Cloud23333's original
-  FGOLocalPlatform).
+- **Advanced** - server start/stop and settings, Banners (which limited-time events appear on the
+  Terminal page), Diagnostics and Help (environment check and error codes), mouse cursor, debug,
+  photo mode, and About (credits, including Cloud23333's original FGOLocalPlatform).
 
 ## Getting Servants
 

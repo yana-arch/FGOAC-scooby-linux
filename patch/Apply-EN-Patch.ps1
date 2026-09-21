@@ -378,6 +378,24 @@ foreach ($item in $plan) {
 
 if ($toCopy.Count -eq 0) {
     Write-Host 'Every file was already in place, so only the marker needed writing.'
+    # A new marker with no file change still needs its own rollback point.
+    $previous = $null
+    if ([IO.File]::Exists($markerPath)) {
+        try { $previous = Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $previous = $null }
+    }
+    if ($previous -and ([string]$previous.version -ne $version -or [string]$previous.manifestHash -ne $manifestHash)) {
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $backup = [IO.Path]::Combine($backupRoot, $stamp)
+        [void][IO.Directory]::CreateDirectory($backup)
+        Copy-FgoFile -Source $markerPath -Destination ([IO.Path]::Combine($backup, 'App\zh\en-patch.json'))
+        Write-FgoJson -Path ([IO.Path]::Combine($backup, 'en-patch-restore.json')) -Value ([ordered]@{
+            version  = $version
+            savedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            replaced = @()
+            added    = @()
+        })
+        Write-Host "Backup of the marker this replaces: $backup"
+    }
 } else {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backup = [IO.Path]::Combine($backupRoot, $stamp)
