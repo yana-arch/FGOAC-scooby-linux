@@ -254,6 +254,66 @@ def stop_server_when_idle():
     stop_server()
 
 
+def ensure_wine_patches():
+    """Ensure binaries, translation hooks, and server tools are patched for Wine/Proton compatibility."""
+    # 1. Patch fgozh.dll for Wine NtQueryInformationByName compatibility
+    for dll_path in [APP_DIR / "zh" / "fgozh.dll", PROJECT_ROOT / "payload" / "App" / "zh" / "fgozh.dll"]:
+        if dll_path.exists():
+            try:
+                with open(dll_path, "rb") as f:
+                    data = bytearray(f.read())
+                offset = 0x19e99
+                if offset + 5 <= len(data) and data[offset:offset+5] == bytes.fromhex("b80c000000"):
+                    bak = dll_path.with_suffix(".dll.bak")
+                    if not bak.exists():
+                        shutil.copyfile(dll_path, bak)
+                    data[offset:offset+5] = bytes.fromhex("31c0909090")
+                    with open(dll_path, "wb") as f:
+                        f.write(data)
+                    log(f"Auto-applied Wine compatibility patch to {dll_path}")
+            except Exception as e:
+                log(f"Warning: Failed to auto-patch {dll_path}: {e}")
+
+    # 2. Patch ago.exe IAT (SetWindowFeedbackSetting -> SetWindowTextA)
+    ago_exe = APP_DIR / "ago.exe"
+    if ago_exe.exists():
+        try:
+            with open(ago_exe, "rb") as f:
+                f.seek(0x1971978)
+                cur = f.read(25)
+            if cur.startswith(b"SetWindowFeedbackSetting"):
+                bak = ago_exe.with_suffix(".exe.bak")
+                if not bak.exists():
+                    shutil.copyfile(ago_exe, bak)
+                with open(ago_exe, "r+b") as f:
+                    f.seek(0x1971978)
+                    f.write(b"SetWindowTextA\x00" + b"\x00"*10)
+                log(f"Auto-applied SetWindowTextA IAT patch to {ago_exe}")
+        except Exception as e:
+            log(f"Warning: Failed to check/patch ago.exe: {e}")
+
+    # 3. Ensure overlay server fixes are deployed
+    overlay_tools = PROJECT_ROOT / "fgoa-linux" / "FGOAC-scooby" / "overlay" / "Server" / "tools"
+    target_tools = PROJECT_ROOT / "Server" / "tools"
+    if overlay_tools.exists() and target_tools.exists():
+        for fname in ["fgo_account.py", "fgo_account_actions.py"]:
+            src = overlay_tools / fname
+            dest = target_tools / fname
+            if src.exists():
+                try:
+                    dest_content = dest.read_text(encoding="utf-8", errors="ignore") if dest.exists() else ""
+                    needs_update = False
+                    if fname == "fgo_account.py" and 'isolated_server["loglevel"] = "warning"' not in dest_content:
+                        needs_update = True
+                    elif fname == "fgo_account_actions.py" and 'limits_by_sid = defaultdict(list)' not in dest_content:
+                        needs_update = True
+                    if needs_update:
+                        shutil.copy2(src, dest)
+                        log(f"Auto-restored Linux fix for {dest} from overlay")
+                except Exception as e:
+                    log(f"Warning: Failed to check/restore {dest}: {e}")
+
+
 def apply_en_patch() -> bool:
     """Apply English translation files and write en-patch marker."""
     log("Request: Apply English Patch")
@@ -269,12 +329,30 @@ def apply_en_patch() -> bool:
                 shutil.copy2(item, dest)
         log(f"Copied English translation files from {payload_zh} to {target_zh}")
     
-    # Write en-patch marker
+    # Auto-patch Wine compatibility
+    ensure_wine_patches()
+
+    # Read manifest info
+    manifest_file = PROJECT_ROOT / "manifest.json"
+    version = "1.2.0"
+    manifest_hash = "572383fc3ad4f6804a140d9500289d3d02d8b58fe748e6e98529ee513835d4e7"
+    if manifest_file.exists():
+        try:
+            mdata = json.loads(manifest_file.read_text(encoding="utf-8"))
+            version = mdata.get("version", version)
+            manifest_hash = mdata.get("manifestHash", manifest_hash)
+        except Exception:
+            pass
+
+    # Write en-patch marker matching manifest
     marker = target_zh / "en-patch.json"
     marker.write_text(json.dumps({
-        "version": "1.1.1",
+        "version": version,
+        "manifestHash": manifest_hash,
+        "appliedUtc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "date": datetime.now().strftime("%Y-%m-%d"),
-        "status": "applied"
+        "status": "applied",
+        "platform": "linux"
     }, indent=2), encoding="utf-8")
     log("Wrote en-patch.json marker.")
     return True
@@ -346,7 +424,10 @@ def launch_game(cmd_str: str):
     except Exception as e:
         log(f"Error saving updated runtime segatools ini: {e}")
 
-    # 4. Prepare injection arguments
+    # 4. Ensure all Wine compatibility patches are active before launch
+    ensure_wine_patches()
+
+    # 5. Prepare injection arguments
     inject_exe = "inject.exe"
     hook_dll = "fgohook.dll"
     chinese_hook_dll = "zh\\fgozh.dll" if os.name == "nt" else "zh/fgozh.dll"
@@ -441,6 +522,9 @@ def main():
     raw_args = sys.argv[1:]
     cmd_str = " ".join(raw_args)
     log(f"PowerShell Shim invoked: {cmd_str}")
+
+    # Ensure Wine patches and overlay fixes are in place
+    ensure_wine_patches()
 
     # Check for runtime version query
     if "PSVersionTable" in cmd_str:
